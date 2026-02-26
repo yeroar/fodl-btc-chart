@@ -24,6 +24,7 @@ type AnimatedAreaMaskProps = {
   color: string;
   gradientColors?: string[];
   chartBounds?: ChartBounds;
+  externalInteractionProgress?: SharedValue<number>;
 };
 
 // Animated area mask that morphs between smooth and detailed views
@@ -40,22 +41,26 @@ export const AnimatedAreaMask = memo(function AnimatedAreaMask({
   color,
   gradientColors,
   chartBounds,
+  externalInteractionProgress,
 }: AnimatedAreaMaskProps) {
   // Interaction progress: 0 = smooth view, 1 = detailed view
-  const interactionProgress = useSharedValue(0);
+  const internalInteractionProgress = useSharedValue(0);
 
   // Smooth eased transition for interaction (scrubbing) - no bounce
-  // Uses SharedValue directly for instant UI thread response (no JS thread delay)
+  // Only used when no external progress is provided
   useAnimatedReaction(
     () => isActive.value,
     (active) => {
-      interactionProgress.value = withTiming(active ? 1 : 0, {
+      if (externalInteractionProgress) return;
+      internalInteractionProgress.value = withTiming(active ? 1 : 0, {
         duration: 200,
         easing: Easing.out(Easing.cubic),
       });
     },
-    []
+    [externalInteractionProgress]
   );
+
+  const interactionProgress = externalInteractionProgress ?? internalInteractionProgress;
 
   // Create interpolated area path using dual-axis interpolation
   // Reading from SharedValues on the UI thread ensures atomic access - no race conditions

@@ -17,6 +17,8 @@ type FoldTabViewProps = {
   rightComponent?: ReactNode;
   scrollEnabled?: boolean;
   backgroundColor?: string;
+  onBellPress?: () => void;
+  bellActive?: boolean;
 };
 
 const HEADER_HEIGHT = 48;
@@ -30,6 +32,8 @@ export const FoldTabView = ({
   rightComponent,
   scrollEnabled,
   backgroundColor,
+  onBellPress,
+  bellActive,
 }: FoldTabViewProps) => {
   const insets = useSafeAreaInsets();
   const theme = UnistylesRuntime.getTheme();
@@ -55,8 +59,8 @@ export const FoldTabView = ({
         <FoldPressable onPress={() => { /* transactions placeholder */ }} hitSlop={10}>
           <ClockIcon />
         </FoldPressable>
-        <FoldPressable onPress={() => { /* notifications placeholder */ }} hitSlop={10}>
-          <BellIcon />
+        <FoldPressable onPress={onBellPress ?? (() => {})} hitSlop={10}>
+          <BellIcon fill={bellActive ? theme.colors.object.positive.bold.default : undefined} />
         </FoldPressable>
       </View>
     );

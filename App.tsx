@@ -18,8 +18,10 @@ import { FoldPillSelector } from "./src/components/FoldPillSelector";
 import { FoldTabBar } from "./src/components/FoldTabBar";
 import { FoldTabView } from "./src/components/FoldTabView";
 import { FoldText } from "./src/components/FoldText";
+import { RollingPriceDisplay } from "./src/components/RollingPriceDisplay";
 import { queryKeys } from "./src/constants/queryKeys";
 import { useExchangeRate } from "./src/hooks/useExchangeRate";
+import { useRollingCursor } from "./src/hooks/useRollingCursor";
 import { ArrowNarrowUpIcon } from "./src/icons/ArrowNarrowUpIcon";
 import { createSmoothCurve, getTargetPointsForTimeframe } from "./src/utils/chartSmoothing";
 import { UNIT } from "./src/utils/conversions";
@@ -56,82 +58,30 @@ const queryClient = new QueryClient({
   },
 });
 
-// ─── Mock Data Generator ─────────────────────────────────────────────────────
+// ─── Offline fallback data (real BTC-USD daily history from CSV) ─────────────
 
-function generateMockBTCData(
-  timeframe: "1D" | "1W" | "1M" | "1Y" | "ALL"
-): ChartDataPoint[] {
-  const now = Date.now();
-  const points: ChartDataPoint[] = [];
+import HISTORY_DATA_JSON from "./src/data/btc-usd-history.json";
+const HISTORY_DATA = HISTORY_DATA_JSON as ChartDataPoint[];
 
-  let intervalMs: number;
-  let count: number;
-  let basePrice: number;
-  let volatility: number;
+const DAY_MS = 24 * 3600 * 1000;
+const TIMEFRAME_DELTAS: Record<string, number> = {
+  "1D": DAY_MS,
+  "1W": 7 * DAY_MS,
+  "1M": 30 * DAY_MS,
+  "1Y": 365 * DAY_MS,
+};
 
-  switch (timeframe) {
-    case "1D":
-      intervalMs = 5 * 60 * 1000;
-      count = 288;
-      basePrice = 97200;
-      volatility = 400;
-      break;
-    case "1W":
-      intervalMs = 30 * 60 * 1000;
-      count = 336;
-      basePrice = 94500;
-      volatility = 1500;
-      break;
-    case "1M":
-      intervalMs = 4 * 60 * 60 * 1000;
-      count = 180;
-      basePrice = 88000;
-      volatility = 4000;
-      break;
-    case "1Y":
-      intervalMs = 24 * 60 * 60 * 1000;
-      count = 365;
-      basePrice = 42000;
-      volatility = 20000;
-      break;
-    case "ALL":
-      intervalMs = 7 * 24 * 60 * 60 * 1000;
-      count = 312;
-      basePrice = 6000;
-      volatility = 40000;
-      break;
-  }
-
-  let seed = timeframe.charCodeAt(0) * 1000 + timeframe.length * 7919;
-  const random = () => {
-    seed = (seed * 16807 + 0) % 2147483647;
-    return (seed - 1) / 2147483646;
-  };
-
-  let price = basePrice;
-  const startTime = now - intervalMs * count;
-
-  for (let i = 0; i < count; i++) {
-    const drift = volatility * 0.0003;
-    const shock = (random() - 0.48) * volatility * 0.04;
-    price = Math.max(price * 0.7, price + drift + shock);
-    points.push({
-      timestamp: startTime + intervalMs * i,
-      rate: Math.round(price * 100) / 100,
-    });
-  }
-
-  const lastFew = Math.min(20, points.length);
-  const targetEnd = timeframe === "ALL" ? 97400 : basePrice + volatility * 0.15;
-  for (let i = points.length - lastFew; i < points.length; i++) {
-    const t = (i - (points.length - lastFew)) / lastFew;
-    const prev = points[i]?.rate ?? targetEnd;
-    if (points[i]) {
-      points[i].rate = prev + (targetEnd - prev) * t * 0.3;
+function sliceHistoryForTimeframe(timeframe: string): ChartDataPoint[] {
+  if (timeframe === "ALL") return HISTORY_DATA;
+  const delta = TIMEFRAME_DELTAS[timeframe] ?? DAY_MS;
+  const lastTs = HISTORY_DATA[HISTORY_DATA.length - 1]?.timestamp ?? 0;
+  const cutoff = lastTs - delta;
+  for (let i = 0; i < HISTORY_DATA.length; i++) {
+    if (HISTORY_DATA[i]!.timestamp >= cutoff) {
+      return HISTORY_DATA.slice(i);
     }
   }
-
-  return points;
+  return HISTORY_DATA;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -223,14 +173,14 @@ function formatActiveChartDate(
   return date.format("MMM D");
 }
 
-// ─── Mock Data (fallback when API is unavailable) ────────────────────────────
+// ─── Offline fallback (sliced from real CSV history) ─────────────────────────
 
-const MOCK_DATA: Record<string, ChartDataPoint[]> = {
-  "1D": generateMockBTCData("1D"),
-  "1W": generateMockBTCData("1W"),
-  "1M": generateMockBTCData("1M"),
-  "1Y": generateMockBTCData("1Y"),
-  ALL: generateMockBTCData("ALL"),
+const FALLBACK_DATA: Record<string, ChartDataPoint[]> = {
+  "1D": sliceHistoryForTimeframe("1D"),
+  "1W": sliceHistoryForTimeframe("1W"),
+  "1M": sliceHistoryForTimeframe("1M"),
+  "1Y": sliceHistoryForTimeframe("1Y"),
+  ALL: sliceHistoryForTimeframe("ALL"),
 };
 
 // Toggle: set to true to use real API, false for mock data only
@@ -247,6 +197,16 @@ function BitcoinChartScreen(): React.JSX.Element {
     x: 0,
     y: { rate: 0 },
   });
+  // Rolling cursor mode toggle
+  const [rollingCursorEnabled, setRollingCursorEnabled] = useState(false);
+  const rollingCursorEnabledSV = useSharedValue(false);
+  useEffect(() => {
+    rollingCursorEnabledSV.value = rollingCursorEnabled;
+  }, [rollingCursorEnabled, rollingCursorEnabledSV]);
+  const toggleRollingCursor = useCallback(() => {
+    setRollingCursorEnabled((prev) => !prev);
+  }, []);
+
   const [selectedTimeframe, setSelectedTimeframe] = useState<ChartTimeframe>(
     timeframes[0]
   );
@@ -308,7 +268,7 @@ function BitcoinChartScreen(): React.JSX.Element {
   const chartData =
     USE_LIVE_DATA && liveChartData.length > 0
       ? liveChartData
-      : MOCK_DATA[selectedTimeframe.value] ?? [];
+      : FALLBACK_DATA[selectedTimeframe.value] ?? [];
 
   // Animated opacity for smooth chart fade-in
   const chartOpacity = useSharedValue(0);
@@ -453,6 +413,26 @@ function BitcoinChartScreen(): React.JSX.Element {
     ? formatActiveChartDate(currentTimestamp, selectedTimeframe)
     : null;
 
+  // Store chart layout for rolling cursor hook (set inside CartesianChart render callback)
+  const chartLeftRef = useRef(0);
+  const usableWidthRef = useRef(0);
+
+  // Rolling cursor hook
+  const {
+    visualIndex,
+    visualXPosition,
+    isVisuallyActive,
+    interactionMorphProgress,
+  } = useRollingCursor({
+    enabled: rollingCursorEnabledSV,
+    isActive: state.isActive,
+    matchedIndex: state.matchedIndex,
+    xPosition: state.x.position,
+    dataLength: chartData.length,
+    chartLeft: chartLeftRef.current,
+    usableWidth: usableWidthRef.current,
+  });
+
   const domainPadding = useMemo(
     () => ({
       bottom: 15,
@@ -485,9 +465,12 @@ function BitcoinChartScreen(): React.JSX.Element {
           Haptics.selectionAsync();
         }
       }
-      setSelectedIndex(matchedIndex);
+      // Skip React state update when rolling cursor handles price display
+      if (!rollingCursorEnabled) {
+        setSelectedIndex(matchedIndex);
+      }
     },
-    []
+    [rollingCursorEnabled]
   );
 
   useEffect(() => {
@@ -536,6 +519,8 @@ function BitcoinChartScreen(): React.JSX.Element {
       contentContainerStyle={{
         flex: 1,
       }}
+      onBellPress={toggleRollingCursor}
+      bellActive={rollingCursorEnabled}
     >
       <View
         style={{
@@ -569,47 +554,57 @@ function BitcoinChartScreen(): React.JSX.Element {
           </View>
 
           {/* Bottom row */}
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "stretch",
-            }}
-          >
-            <FoldConversionText
-              value={1}
-              fromUnit={UNIT.BTC}
-              toUnit={UNIT.USD}
-              btcToUsdRate={currentPrice}
-              type="header-md"
+          {rollingCursorEnabled ? (
+            <RollingPriceDisplay
+              visualIndex={visualIndex}
+              isVisuallyActive={isVisuallyActive}
+              chartData={chartData}
+              earliestPrice={earliestPrice}
+              latestPrice={latestPrice}
             />
+          ) : (
             <View
               style={{
                 flexDirection: "row",
-                alignItems: "center",
-                gap: theme.spacing["3xs"],
+                justifyContent: "space-between",
+                alignItems: "stretch",
               }}
             >
+              <FoldConversionText
+                value={1}
+                fromUnit={UNIT.BTC}
+                toUnit={UNIT.USD}
+                btcToUsdRate={currentPrice}
+                type="header-md"
+              />
               <View
                 style={{
-                  transform: [{ scaleY: differenceInPrice < 0 ? -1 : 1 }],
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: theme.spacing["3xs"],
                 }}
               >
-                <ArrowNarrowUpIcon
-                  width={20}
-                  height={20}
-                  fill={
-                    differenceInPrice < 0
-                      ? theme.colors.object.negative.bold.default
-                      : theme.colors.object.positive.bold.default
-                  }
-                />
+                <View
+                  style={{
+                    transform: [{ scaleY: differenceInPrice < 0 ? -1 : 1 }],
+                  }}
+                >
+                  <ArrowNarrowUpIcon
+                    width={20}
+                    height={20}
+                    fill={
+                      differenceInPrice < 0
+                        ? theme.colors.object.negative.bold.default
+                        : theme.colors.object.positive.bold.default
+                    }
+                  />
+                </View>
+                <FoldText type="header-md">
+                  {percentChange.toFixed(2)}%
+                </FoldText>
               </View>
-              <FoldText type="header-md">
-                {percentChange.toFixed(2)}%
-              </FoldText>
             </View>
-          </View>
+          )}
         </View>
 
         {/* Chart */}
@@ -625,7 +620,7 @@ function BitcoinChartScreen(): React.JSX.Element {
           {/* Date label overlay when scrubbing */}
           {activeDateLabel && (
             <AnimatedDateLabel
-              xPosition={state.x.position}
+              xPosition={rollingCursorEnabled ? visualXPosition : state.x.position}
               screenWidth={screenWidth}
               label={activeDateLabel}
               textColor={theme.colors.face.primary}
@@ -669,6 +664,10 @@ function BitcoinChartScreen(): React.JSX.Element {
                   };
 
                   pendingCoordParamsRef.current = coordParams;
+
+                  // Update refs for rolling cursor hook
+                  chartLeftRef.current = chartBounds.left;
+                  usableWidthRef.current = usableWidth;
 
                   const lastNormalized =
                     toSmoothPoints.value[
@@ -729,9 +728,12 @@ function BitcoinChartScreen(): React.JSX.Element {
                         is1DTimeframe={
                           selectedTimeframe.value === "1D"
                         }
-                        crosshairXPosition={state.x.position}
+                        crosshairXPosition={rollingCursorEnabled ? visualXPosition : state.x.position}
                         crosshairMatchedIndex={state.matchedIndex}
                         chartDataLength={chartData.length}
+                        isVisuallyActive={rollingCursorEnabled ? isVisuallyActive : undefined}
+                        externalInteractionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
+                        visualIndex={rollingCursorEnabled ? visualIndex : undefined}
                       />
 
                       {/* Primary line (black) - left of crosshair */}
@@ -747,11 +749,12 @@ function BitcoinChartScreen(): React.JSX.Element {
                         containerHeight={chartHeight}
                         animatedClipX={
                           toolTipIsShowing
-                            ? state.x.position
+                            ? (rollingCursorEnabled ? visualXPosition : state.x.position)
                             : undefined
                         }
                         clipSide="left"
                         chartBounds={chartBounds}
+                        externalInteractionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
                       />
 
                       {/* Dimmed line (yellow) - right of crosshair */}
@@ -765,20 +768,24 @@ function BitcoinChartScreen(): React.JSX.Element {
                         rangeTransition={rangeTransition}
                         color="rgba(209, 163, 0, 1)"
                         containerHeight={chartHeight}
-                        animatedClipX={state.x.position}
+                        animatedClipX={rollingCursorEnabled ? visualXPosition : state.x.position}
                         clipSide="right"
                         chartBounds={chartBounds}
                         showLine={toolTipIsShowing}
+                        externalInteractionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
                       />
 
                       {/* Tooltip dot */}
                       <ToolTip
-                        x={state.x.position}
+                        x={rollingCursorEnabled ? visualXPosition : state.x.position}
                         matchedIndex={state.matchedIndex}
+                        visualIndex={rollingCursorEnabled ? visualIndex : undefined}
                         toDetailedPoints={toDetailedPoints}
+                        toSmoothPoints={toSmoothPoints}
+                        interactionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
                         coordParams={coordParams}
                         chartDataLength={chartData.length}
-                        isActive={state.isActive}
+                        isActive={rollingCursorEnabled ? isVisuallyActive : state.isActive}
                       />
                     </>
                   );
@@ -875,14 +882,20 @@ function BitcoinChartScreen(): React.JSX.Element {
 const ToolTip = memo(function ToolTip({
   x,
   matchedIndex,
+  visualIndex,
   toDetailedPoints,
+  toSmoothPoints,
+  interactionProgress,
   coordParams,
   chartDataLength,
   isActive,
 }: {
   x: SharedValue<number>;
   matchedIndex: SharedValue<number>;
+  visualIndex?: SharedValue<number>;
   toDetailedPoints: SharedValue<NormalizedPoint[]>;
+  toSmoothPoints?: SharedValue<NormalizedPoint[]>;
+  interactionProgress?: SharedValue<number>;
   coordParams: CoordParams;
   chartDataLength: number;
   isActive: SharedValue<boolean>;
@@ -895,28 +908,60 @@ const ToolTip = memo(function ToolTip({
   }, []);
 
   const y = useDerivedValue(() => {
-    const victoryIdx = matchedIndex.value;
     const detailed = toDetailedPoints.value;
-
     if (detailed.length === 0 || chartDataLength === 0) return 0;
-    if (victoryIdx < 0) return 0;
 
-    const mappedIdx = Math.round(
-      (victoryIdx / Math.max(chartDataLength - 1, 1)) *
-        (detailed.length - 1)
-    );
-    const clampedIdx = Math.min(
-      Math.max(0, mappedIdx),
-      detailed.length - 1
-    );
+    // Helper: get Y from a data array at a given normalized position (float lerp)
+    const getYAtPos = (data: NormalizedPoint[], pos: number): number => {
+      "worklet";
+      if (data.length === 0) return 0;
+      const clamped = Math.max(0, Math.min(pos, data.length - 1));
+      const lo = Math.floor(clamped);
+      const hi = Math.min(lo + 1, data.length - 1);
+      const loP = data[lo];
+      const hiP = data[hi];
+      if (!loP || !hiP) return 0;
+      const w = clamped - lo;
+      return loP.y * (1 - w) + hiP.y * w;
+    };
 
-    const norm = detailed[clampedIdx];
-    if (!norm) return 0;
+    // Determine the float position in the data array
+    let normalizedPos: number;
+    if (visualIndex) {
+      // Rolling cursor: float index
+      const maxIdx = Math.max(chartDataLength - 1, 1);
+      normalizedPos = (visualIndex.value / maxIdx) * (detailed.length - 1);
+    } else {
+      // Default: integer index mapping
+      const victoryIdx = matchedIndex.value;
+      if (victoryIdx < 0) return 0;
+      normalizedPos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
+    }
+
+    // Get Y from detailed points
+    const detailedY = getYAtPos(detailed, normalizedPos);
+
+    // If we have smooth points + interaction progress, lerp between smooth and detailed
+    // to match the line's current morph state (avoids ball-off-line desync)
+    let normY: number;
+    if (toSmoothPoints && interactionProgress) {
+      const smooth = toSmoothPoints.value;
+      if (smooth.length > 0) {
+        const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
+        const smoothY = getYAtPos(smooth, smoothPos);
+        const t = interactionProgress.value;
+        normY = smoothY + (detailedY - smoothY) * t;
+      } else {
+        normY = detailedY;
+      }
+    } else {
+      normY = detailedY;
+    }
 
     return (
       coordParams.chartBottom -
       coordParams.dotMargin -
-      norm.y * coordParams.usableHeight
+      normY * coordParams.usableHeight
     );
   }, [coordParams, chartDataLength]);
 

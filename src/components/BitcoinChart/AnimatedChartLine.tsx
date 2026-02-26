@@ -28,6 +28,9 @@ type AnimatedChartLineProps = {
   clipSide?: "left" | "right"; // Which side of animatedClipX to show
   chartBounds?: { left: number; right: number; top: number; bottom: number };
   showLine?: boolean;
+  // External interaction progress (e.g. spring-driven from rolling cursor)
+  // When provided, overrides the internal withTiming-based interactionProgress
+  externalInteractionProgress?: SharedValue<number>;
 };
 
 // Animated chart line that morphs between smooth and detailed views
@@ -48,22 +51,27 @@ export const AnimatedChartLine = memo(function AnimatedChartLine({
   clipSide,
   chartBounds,
   showLine = true,
+  externalInteractionProgress,
 }: AnimatedChartLineProps) {
   // Interaction progress: 0 = smooth view, 1 = detailed view
-  const interactionProgress = useSharedValue(0);
+  const internalInteractionProgress = useSharedValue(0);
 
   // Smooth eased transition for interaction (scrubbing) - no bounce
   // Uses SharedValue directly for instant UI thread response (no JS thread delay)
+  // Only used when no external progress is provided
   useAnimatedReaction(
     () => isActive.value,
     (active) => {
-      interactionProgress.value = withTiming(active ? 1 : 0, {
+      if (externalInteractionProgress) return; // skip when externally controlled
+      internalInteractionProgress.value = withTiming(active ? 1 : 0, {
         duration: 200,
         easing: Easing.out(Easing.cubic),
       });
     },
-    []
+    [externalInteractionProgress]
   );
+
+  const interactionProgress = externalInteractionProgress ?? internalInteractionProgress;
 
   // Create animated clip rect from SharedValue (for smooth Android performance)
   // Always returns a valid rect - uses full bounds as fallback when not actively clipping

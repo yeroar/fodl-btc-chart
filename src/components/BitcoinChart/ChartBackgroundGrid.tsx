@@ -41,12 +41,16 @@ type ChartBackgroundGridProps = {
   toDetailedPoints: SharedValue<NormalizedPoint[]>;
   coordParams: CoordParams;
   rangeTransition: SharedValue<number>;
-  lineEndX?: number; // X position where the line ends (for 1D padding)
-  is1DTimeframe?: boolean; // Whether we're in 1D timeframe (for angular gradient from endpoint)
-  // SharedValues for animated crosshairs (avoids JS thread delay on Android)
+  lineEndX?: number;
+  is1DTimeframe?: boolean;
   crosshairXPosition?: SharedValue<number>;
   crosshairMatchedIndex?: SharedValue<number>;
   chartDataLength?: number;
+  /** When provided, keeps crosshairs/scrubbed dots visible during snap-back */
+  isVisuallyActive?: SharedValue<boolean>;
+  externalInteractionProgress?: SharedValue<number>;
+  /** Float index from rolling cursor for smooth crosshair Y tracking */
+  visualIndex?: SharedValue<number>;
 };
 
 // Animated crosshairs component that uses SharedValues directly
@@ -57,6 +61,9 @@ const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
   toDetailedPoints,
   coordParams,
   chartDataLength,
+  isVisuallyActive,
+  interactionProgress,
+  visualIndex,
 }: {
   chartBounds: ChartBounds;
   crosshairXPosition: SharedValue<number>;
@@ -64,25 +71,49 @@ const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
   toDetailedPoints: SharedValue<NormalizedPoint[]>;
   coordParams: CoordParams;
   chartDataLength: number;
+  isVisuallyActive: SharedValue<boolean>;
+  interactionProgress?: SharedValue<number>;
+  visualIndex?: SharedValue<number>;
 }) {
-  // Calculate Y position from matchedIndex (same logic as ToolTip)
+  const verticalOpacity = useDerivedValue(() => (isVisuallyActive.value ? 1 : 0));
+  // Horizontal line fades in with interaction progress (appears late, not immediately)
+  const horizontalOpacity = useDerivedValue(() => {
+    if (!isVisuallyActive.value) return 0;
+    // Use interaction progress if available — remaps 0.6..1 → 0..1 so it appears in the last 40%
+    if (interactionProgress) {
+      const t = interactionProgress.value;
+      return Math.max(0, Math.min(1, (t - 0.6) / 0.4));
+    }
+    return 1;
+  });
+  // Calculate Y position — uses visualIndex (float lerp) when available, else matchedIndex
   const crosshairY = useDerivedValue(() => {
-    const victoryIdx = crosshairMatchedIndex.value;
     const detailed = toDetailedPoints.value;
-
     if (detailed.length === 0 || chartDataLength === 0) return 0;
-    if (victoryIdx < 0) return 0;
 
-    // Map Victory's index to our 288-point array
-    const mappedIdx = Math.round(
-      (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1)
-    );
-    const clampedIdx = Math.min(Math.max(0, mappedIdx), detailed.length - 1);
+    let pos: number;
+    if (visualIndex) {
+      // Float index from rolling cursor — smooth animated position
+      const maxIdx = Math.max(chartDataLength - 1, 1);
+      pos = (visualIndex.value / maxIdx) * (detailed.length - 1);
+    } else {
+      // Integer index from Victory
+      const victoryIdx = crosshairMatchedIndex.value;
+      if (victoryIdx < 0) return 0;
+      pos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
+    }
 
-    const norm = detailed[clampedIdx];
-    if (!norm) return 0;
+    // Float lerp between adjacent points
+    const clamped = Math.max(0, Math.min(pos, detailed.length - 1));
+    const lo = Math.floor(clamped);
+    const hi = Math.min(lo + 1, detailed.length - 1);
+    const loP = detailed[lo];
+    const hiP = detailed[hi];
+    if (!loP || !hiP) return 0;
+    const w = clamped - lo;
+    const normY = loP.y * (1 - w) + hiP.y * w;
 
-    return coordParams.chartBottom - coordParams.dotMargin - norm.y * coordParams.usableHeight;
+    return coordParams.chartBottom - coordParams.dotMargin - normY * coordParams.usableHeight;
   }, [coordParams, chartDataLength]);
 
   // Derived values for line endpoints
@@ -93,22 +124,26 @@ const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
 
   return (
     <Group>
-      {/* Vertical crosshair line */}
-      <SkiaLine
-        p1={verticalP1}
-        p2={verticalP2}
-        strokeWidth={2}
-        color={CROSSHAIR_COLOR}
-        strokeCap="round"
-      />
-      {/* Horizontal crosshair line */}
-      <SkiaLine
-        p1={horizontalP1}
-        p2={horizontalP2}
-        strokeWidth={2}
-        color={CROSSHAIR_COLOR}
-        strokeCap="round"
-      />
+      {/* Vertical crosshair line — appears immediately */}
+      <Group opacity={verticalOpacity}>
+        <SkiaLine
+          p1={verticalP1}
+          p2={verticalP2}
+          strokeWidth={2}
+          color={CROSSHAIR_COLOR}
+          strokeCap="round"
+        />
+      </Group>
+      {/* Horizontal crosshair line — fades in late */}
+      <Group opacity={horizontalOpacity}>
+        <SkiaLine
+          p1={horizontalP1}
+          p2={horizontalP2}
+          strokeWidth={2}
+          color={CROSSHAIR_COLOR}
+          strokeCap="round"
+        />
+      </Group>
     </Group>
   );
 });
@@ -170,12 +205,18 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
   crosshairXPosition,
   crosshairMatchedIndex,
   chartDataLength,
+  isVisuallyActive,
+  externalInteractionProgress,
+  visualIndex,
 }: ChartBackgroundGridProps) {
   // Use animated approach if SharedValues are provided
   const useAnimatedApproach =
     crosshairXPosition !== undefined &&
     crosshairMatchedIndex !== undefined &&
     chartDataLength !== undefined;
+
+  // effectiveActive: use isVisuallyActive (includes snap-back) when provided
+  const effectiveActive = isVisuallyActive ?? isActive;
 
   // Generate static dot positions (doesn't depend on scrub state)
   const dotPositions = useMemo(() => {
@@ -187,11 +228,8 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
     return positions;
   }, [chartBounds.left, chartBounds.right, is1DTimeframe, lineEndX]);
 
-  // Calculate opacity for each dot position (for gradient dots)
-  // This is used for the fade effect from endpoint (1D) or from crosshair (scrubbing)
-  // Note: Reading isActive.value here works because re-render happens on state change
   const gradientDots = useMemo(() => {
-    const isActiveValue = isActive.value;
+    const isActiveValue = effectiveActive.value;
     const is1DNonScrubbed = is1DTimeframe && !isActiveValue && lineEndX !== undefined;
 
     if (isActiveValue && useAnimatedApproach) {
@@ -228,7 +266,7 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
       // NON-SCRUBBED STATE: Full opacity gradient
       return dotPositions.map((x) => ({ x, opacity: 1 }));
     }
-  }, [dotPositions, isActive.value, clipX, is1DTimeframe, lineEndX, useAnimatedApproach]);
+  }, [dotPositions, effectiveActive.value, clipX, is1DTimeframe, lineEndX, useAnimatedApproach]);
 
   const topOffset = chartBounds.top + 1;
 
@@ -274,7 +312,7 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
       })}
 
       {/* Animated solid-color overlay for scrubbing (clips to left of crosshair) */}
-      {isActive.value && useAnimatedApproach && crosshairXPosition && (
+      {effectiveActive.value && useAnimatedApproach && crosshairXPosition && (
         <AnimatedScrubbedDots
           chartBounds={chartBounds}
           crosshairXPosition={crosshairXPosition}
@@ -293,10 +331,11 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
         isActive={isActive}
         rangeTransition={rangeTransition}
         color={YELLOW_FILL}
+        externalInteractionProgress={externalInteractionProgress}
       />
 
-      {/* Animated crosshairs using SharedValues (for smooth Android performance) */}
-      {isActive.value && useAnimatedApproach && crosshairXPosition && crosshairMatchedIndex && (
+      {/* Animated crosshairs — always mounted, visibility driven by SharedValue */}
+      {useAnimatedApproach && crosshairXPosition && crosshairMatchedIndex && (
         <AnimatedCrosshairs
           chartBounds={chartBounds}
           crosshairXPosition={crosshairXPosition}
@@ -304,11 +343,14 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
           toDetailedPoints={toDetailedPoints}
           coordParams={coordParams}
           chartDataLength={chartDataLength}
+          isVisuallyActive={effectiveActive}
+          interactionProgress={externalInteractionProgress}
+          visualIndex={visualIndex}
         />
       )}
 
       {/* Fallback static crosshairs (when SharedValues not provided) */}
-      {!useAnimatedApproach && isActive.value && clipX !== undefined && (
+      {!useAnimatedApproach && effectiveActive.value && clipX !== undefined && (
         <SkiaLine
           p1={vec(clipX, chartBounds.top)}
           p2={vec(clipX, chartBounds.bottom)}
@@ -317,7 +359,7 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
           strokeCap="round"
         />
       )}
-      {!useAnimatedApproach && isActive.value && clipY !== undefined && (
+      {!useAnimatedApproach && effectiveActive.value && clipY !== undefined && (
         <SkiaLine
           p1={vec(chartBounds.left, clipY)}
           p2={vec(chartBounds.right, clipY)}
