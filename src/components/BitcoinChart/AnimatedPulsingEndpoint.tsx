@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
+import { MORPH_DETAIL_CAP } from "../../constants/animation";
 import type { CoordParams, NormalizedPoint } from "./types";
 
 // Lottie animation is 12x12
@@ -62,7 +63,7 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
 
   // Animated X position - uses dual-axis interpolation to match the line exactly
   const animatedX = useDerivedValue(() => {
-    const tInteraction = Math.min(interactionProgress.value, 0.75);
+    const tInteraction = Math.min(interactionProgress.value, MORPH_DETAIL_CAP);
     const tRange = rangeTransition.value;
 
     const fromSmooth = fromSmoothPoints.value;
@@ -96,7 +97,7 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
 
   // Animated Y position - uses dual-axis interpolation to match the line exactly
   const animatedY = useDerivedValue(() => {
-    const tInteraction = Math.min(interactionProgress.value, 0.75);
+    const tInteraction = Math.min(interactionProgress.value, MORPH_DETAIL_CAP);
     const tRange = rangeTransition.value;
 
     const fromSmooth = fromSmoothPoints.value;

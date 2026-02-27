@@ -10,6 +10,7 @@ import {
 } from "react-native-reanimated";
 import type { ChartBounds } from "victory-native";
 
+import { MORPH_DETAIL_CAP } from "../../constants/animation";
 import type { CoordParams, NormalizedPoint } from "./types";
 import { generateAreaPath } from "./utils";
 
@@ -65,8 +66,7 @@ export const AnimatedAreaMask = memo(function AnimatedAreaMask({
   // Create interpolated area path using dual-axis interpolation
   // Reading from SharedValues on the UI thread ensures atomic access - no race conditions
   const animatedAreaPath = useDerivedValue(() => {
-    // Cap morph at 75% to keep the line smooth even when fully scrubbing
-    const tInteraction = Math.min(interactionProgress.value, 0.75);
+    const tInteraction = Math.min(interactionProgress.value, MORPH_DETAIL_CAP);
     const tRange = rangeTransition.value;
 
     // Read from SharedValues (thread-safe on UI thread)

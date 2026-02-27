@@ -19,6 +19,7 @@ import { FoldTabBar } from "./src/components/FoldTabBar";
 import { FoldTabView } from "./src/components/FoldTabView";
 import { FoldText } from "./src/components/FoldText";
 import { RollingPriceDisplay } from "./src/components/RollingPriceDisplay";
+import { MORPH_DETAIL_CAP } from "./src/constants/animation";
 import { queryKeys } from "./src/constants/queryKeys";
 import { useExchangeRate } from "./src/hooks/useExchangeRate";
 import { useRollingCursor } from "./src/hooks/useRollingCursor";
@@ -652,8 +653,10 @@ function BitcoinChartScreen(): React.JSX.Element {
                 domainPadding={domainPadding}
               >
                 {({ points: pointsData, chartBounds }) => {
+                  // For rolling cursor: always true — SharedValues handle visibility on UI thread
+                  // For legacy: use React state snapshot
                   const toolTipIsShowing = rollingCursorEnabled
-                    ? isVisuallyActive.value
+                    ? true
                     : isActive && selectedIndex !== null;
                   const idx = selectedIndex ?? -1;
 
@@ -765,9 +768,9 @@ function BitcoinChartScreen(): React.JSX.Element {
                         color="rgba(23, 21, 14, 1)"
                         containerHeight={chartHeight}
                         animatedClipX={
-                          toolTipIsShowing
-                            ? (rollingCursorEnabled ? visualXPosition : state.x.position)
-                            : undefined
+                          rollingCursorEnabled
+                            ? visualXPosition
+                            : (toolTipIsShowing ? state.x.position : undefined)
                         }
                         clipSide="left"
                         chartBounds={chartBounds}
@@ -788,7 +791,7 @@ function BitcoinChartScreen(): React.JSX.Element {
                         animatedClipX={rollingCursorEnabled ? visualXPosition : state.x.position}
                         clipSide="right"
                         chartBounds={chartBounds}
-                        showLine={toolTipIsShowing}
+                        showLine={rollingCursorEnabled ? true : toolTipIsShowing}
                         externalInteractionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
                       />
 
@@ -982,7 +985,7 @@ const ToolTip = memo(function ToolTip({
         if (smooth.length > 0) {
           const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
           const smoothY = getYAtPos(smooth, smoothPos);
-          const t = Math.min(interactionProgress.value, 0.75);
+          const t = Math.min(interactionProgress.value, MORPH_DETAIL_CAP);
           normY = smoothY + (detailedY - smoothY) * t;
         } else {
           normY = detailedY;
