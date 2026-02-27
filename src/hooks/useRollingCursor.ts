@@ -108,20 +108,27 @@ export function useRollingCursor({
     }
   }, [dataLength]);
 
-  // During scrub: once initial spring has arrived, track 1:1
+  // During scrub: once initial spring has arrived, track sub-pixel 1:1
   useAnimatedReaction(
-    () => matchedIndex.value,
-    (idx) => {
+    () => xPosition.value,
+    () => {
       if (!enabled.value) return;
       if (!isActive.value) return;
 
       if (hasArrived.value) {
-        // Cancel any residual spring and track instantly
+        // Convert pixel position to continuous float index
+        const normalizedX = Math.max(
+          0,
+          Math.min(
+            (xPosition.value - chartLeft) / Math.max(usableWidth, 1),
+            1
+          )
+        );
         cancelAnimation(visualIndex);
-        visualIndex.value = idx;
+        visualIndex.value = normalizedX * (dataLength - 1);
       }
     },
-    []
+    [chartLeft, usableWidth, dataLength]
   );
 
   // Derive pixel X position from visualIndex

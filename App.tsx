@@ -437,6 +437,39 @@ function BitcoinChartScreen(): React.JSX.Element {
     usableWidth: usableWidthRef.current,
   });
 
+  // Pre-computed smoothed Y array: morph(smooth↔detailed) + Gaussian — shared by line & cursor
+  const smoothedToNormY = useDerivedValue(() => {
+    const smooth = toSmoothPoints.value;
+    const detailed = toDetailedPoints.value;
+    if (smooth.length === 0 || detailed.length === 0) return [];
+
+    const t = Math.min(interactionMorphProgress.value, MORPH_DETAIL_CAP);
+    const len = detailed.length;
+
+    // Step 1: morph Y between smooth and detailed
+    const morphed: number[] = new Array(len);
+    for (let i = 0; i < len; i++) {
+      const sY = smooth[i]?.y ?? 0;
+      const dY = detailed[i]?.y ?? 0;
+      morphed[i] = sY + (dY - sY) * t;
+    }
+
+    // Step 2: Gaussian smoothing — same 5-point kernel [1,4,6,4,1]/16, same passes as line
+    const passes = Math.round(3 * (1 - t));
+    for (let pass = 0; pass < passes; pass++) {
+      // Copy current values for this pass
+      const prev: number[] = new Array(len);
+      for (let j = 0; j < len; j++) prev[j] = morphed[j]!;
+
+      for (let i = 2; i < len - 2; i++) {
+        morphed[i] =
+          (prev[i - 2]! + 4 * prev[i - 1]! + 6 * prev[i]! + 4 * prev[i + 1]! + prev[i + 2]!) / 16;
+      }
+    }
+
+    return morphed;
+  }, []);
+
   const domainPadding = useMemo(
     () => ({
       bottom: 15,
@@ -801,8 +834,7 @@ function BitcoinChartScreen(): React.JSX.Element {
                         matchedIndex={state.matchedIndex}
                         visualIndex={rollingCursorEnabled ? visualIndex : undefined}
                         toDetailedPoints={toDetailedPoints}
-                        toSmoothPoints={toSmoothPoints}
-                        interactionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
+                        smoothedToNormY={rollingCursorEnabled ? smoothedToNormY : undefined}
                         coordParams={coordParams}
                         chartDataLength={chartData.length}
                         isActive={rollingCursorEnabled ? isVisuallyActive : state.isActive}
@@ -905,8 +937,7 @@ const ToolTip = memo(function ToolTip({
   matchedIndex,
   visualIndex,
   toDetailedPoints,
-  toSmoothPoints,
-  interactionProgress,
+  smoothedToNormY,
   coordParams,
   chartDataLength,
   isActive,
@@ -916,8 +947,7 @@ const ToolTip = memo(function ToolTip({
   matchedIndex: SharedValue<number>;
   visualIndex?: SharedValue<number>;
   toDetailedPoints: SharedValue<NormalizedPoint[]>;
-  toSmoothPoints?: SharedValue<NormalizedPoint[]>;
-  interactionProgress?: SharedValue<number>;
+  smoothedToNormY?: SharedValue<number[]>;
   coordParams: CoordParams;
   chartDataLength: number;
   isActive: SharedValue<boolean>;
@@ -936,11 +966,10 @@ const ToolTip = memo(function ToolTip({
     () => {
       // Track all inputs that affect Y position
       const idx = visualIndex ? visualIndex.value : matchedIndex.value;
-      const morphT = interactionProgress ? interactionProgress.value : 0;
-      // Touch detailed/smooth to subscribe to their changes
+      // Touch arrays to subscribe to their changes
       const dLen = toDetailedPoints.value.length;
-      const sLen = toSmoothPoints ? toSmoothPoints.value.length : 0;
-      return { idx, morphT, dLen, sLen };
+      const sLen = smoothedToNormY ? smoothedToNormY.value.length : 0;
+      return { idx, dLen, sLen };
     },
     () => {
       const detailed = toDetailedPoints.value;
@@ -948,20 +977,6 @@ const ToolTip = memo(function ToolTip({
         cursorY.value = 0;
         return;
       }
-
-      // Helper: get Y from a data array at a given normalized position (float lerp)
-      const getYAtPos = (data: NormalizedPoint[], pos: number): number => {
-        "worklet";
-        if (data.length === 0) return 0;
-        const clamped = Math.max(0, Math.min(pos, data.length - 1));
-        const lo = Math.floor(clamped);
-        const hi = Math.min(lo + 1, data.length - 1);
-        const loP = data[lo];
-        const hiP = data[hi];
-        if (!loP || !hiP) return 0;
-        const w = clamped - lo;
-        return loP.y * (1 - w) + hiP.y * w;
-      };
 
       // Determine the float position in the data array
       let normalizedPos: number;
@@ -977,21 +992,32 @@ const ToolTip = memo(function ToolTip({
         normalizedPos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
       }
 
-      const detailedY = getYAtPos(detailed, normalizedPos);
-
       let normY: number;
-      if (toSmoothPoints && interactionProgress) {
-        const smooth = toSmoothPoints.value;
-        if (smooth.length > 0) {
-          const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
-          const smoothY = getYAtPos(smooth, smoothPos);
-          const t = Math.min(interactionProgress.value, MORPH_DETAIL_CAP);
-          normY = smoothY + (detailedY - smoothY) * t;
-        } else {
-          normY = detailedY;
+      if (smoothedToNormY) {
+        // Use pre-computed smoothed array — lerp between adjacent values
+        const smoothedY = smoothedToNormY.value;
+        if (smoothedY.length === 0) {
+          cursorY.value = 0;
+          return;
         }
+        const pos = Math.max(0, Math.min(normalizedPos, smoothedY.length - 1));
+        const lo = Math.floor(pos);
+        const hi = Math.min(lo + 1, smoothedY.length - 1);
+        const w = pos - lo;
+        normY = (smoothedY[lo] ?? 0) * (1 - w) + (smoothedY[hi] ?? 0) * w;
       } else {
-        normY = detailedY;
+        // Fallback: use detailed points directly (non-rolling mode)
+        const clamped = Math.max(0, Math.min(normalizedPos, detailed.length - 1));
+        const lo = Math.floor(clamped);
+        const hi = Math.min(lo + 1, detailed.length - 1);
+        const loP = detailed[lo];
+        const hiP = detailed[hi];
+        if (!loP || !hiP) {
+          cursorY.value = 0;
+          return;
+        }
+        const w = clamped - lo;
+        normY = loP.y * (1 - w) + hiP.y * w;
       }
 
       cursorY.value =
