@@ -628,7 +628,7 @@ function BitcoinChartScreen(): React.JSX.Element {
               screenWidth={screenWidth}
               textColor={theme.colors.face.primary}
               visualIndex={visualIndex}
-              isVisuallyActive={isVisuallyActive}
+              isVisuallyActive={state.isActive}
               chartData={chartData}
               selectedTimeframe={selectedTimeframe}
             />
