@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import { TextInput, View } from "react-native";
 import {
   type SharedValue,
@@ -68,12 +68,34 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
     });
   }, []);
 
+  // Reset text imperatively when display values change (timeframe switch)
+  const resetToLatest = useCallback(() => {
+    const priceText = formatValueToStringValue(latestPrice, "usd");
+    const ep = earliestPrice;
+    const pctText = ep === 0 ? "0.00%" : `${(((latestPrice - ep) / ep) * 100).toFixed(2)}%`;
+    const diff = latestPrice - ep;
+
+    priceRef.current?.setNativeProps({ text: priceText });
+    percentRef.current?.setNativeProps({ text: pctText });
+    arrowRef.current?.setNativeProps({
+      style: { transform: [{ scaleY: diff < 0 ? -1 : 1 }] },
+    });
+  }, [latestPrice, earliestPrice]);
+
+  // Sync text when timeframe switches (defaultValue alone doesn't override setNativeProps)
+  useEffect(() => {
+    resetToLatest();
+  }, [resetToLatest]);
+
   // Fire on every animation frame of visualIndex
   useAnimatedReaction(
     () => ({ idx: visualIndex.value, active: isVisuallyActive.value }),
-    (curr) => {
+    (curr, prev) => {
       if (curr.active) {
         runOnJS(updateNativeText)(curr.idx);
+      } else if (prev !== null && prev.active) {
+        // Just released — reset to latest price
+        runOnJS(resetToLatest)();
       }
     },
     []
