@@ -24,6 +24,7 @@ import { useExchangeRate } from "./src/hooks/useExchangeRate";
 import { useRollingCursor } from "./src/hooks/useRollingCursor";
 import { ArrowNarrowUpIcon } from "./src/icons/ArrowNarrowUpIcon";
 import { createSmoothCurve, getTargetPointsForTimeframe } from "./src/utils/chartSmoothing";
+import { typographyStyles } from "./src/theme/typography/typography";
 import { UNIT } from "./src/utils/conversions";
 
 import { Circle, Group } from "@shopify/react-native-skia";
@@ -32,12 +33,13 @@ import dayjs from "dayjs";
 import * as Font from "expo-font";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Platform, TextInput, useWindowDimensions, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   Easing,
   runOnJS,
   type SharedValue,
+  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -306,6 +308,7 @@ function BitcoinChartScreen(): React.JSX.Element {
   const fromDetailedPoints = useSharedValue<NormalizedPoint[]>([]);
   const toSmoothPoints = useSharedValue<NormalizedPoint[]>([]);
   const toDetailedPoints = useSharedValue<NormalizedPoint[]>([]);
+  const cursorY = useSharedValue(0);
 
   const previousDataIdRef = useRef<string>("");
 
@@ -618,13 +621,25 @@ function BitcoinChartScreen(): React.JSX.Element {
           }}
         >
           {/* Date label overlay when scrubbing */}
-          {activeDateLabel && (
+          {rollingCursorEnabled ? (
             <AnimatedDateLabel
-              xPosition={rollingCursorEnabled ? visualXPosition : state.x.position}
+              xPosition={visualXPosition}
               screenWidth={screenWidth}
-              label={activeDateLabel}
               textColor={theme.colors.face.primary}
+              visualIndex={visualIndex}
+              isVisuallyActive={isVisuallyActive}
+              chartData={chartData}
+              selectedTimeframe={selectedTimeframe}
             />
+          ) : (
+            activeDateLabel && (
+              <AnimatedDateLabel
+                xPosition={state.x.position}
+                screenWidth={screenWidth}
+                label={activeDateLabel}
+                textColor={theme.colors.face.primary}
+              />
+            )
           )}
           {chartData.length > 0 ? (
             <Animated.View style={[{ flex: 1 }, chartAnimatedStyle]}>
@@ -637,8 +652,9 @@ function BitcoinChartScreen(): React.JSX.Element {
                 domainPadding={domainPadding}
               >
                 {({ points: pointsData, chartBounds }) => {
-                  const toolTipIsShowing =
-                    isActive && selectedIndex !== null;
+                  const toolTipIsShowing = rollingCursorEnabled
+                    ? isVisuallyActive.value
+                    : isActive && selectedIndex !== null;
                   const idx = selectedIndex ?? -1;
 
                   const victoryDetailedPoints = pointsData.rate;
@@ -734,6 +750,7 @@ function BitcoinChartScreen(): React.JSX.Element {
                         isVisuallyActive={rollingCursorEnabled ? isVisuallyActive : undefined}
                         externalInteractionProgress={rollingCursorEnabled ? interactionMorphProgress : undefined}
                         visualIndex={rollingCursorEnabled ? visualIndex : undefined}
+                        cursorY={cursorY}
                       />
 
                       {/* Primary line (black) - left of crosshair */}
@@ -786,6 +803,7 @@ function BitcoinChartScreen(): React.JSX.Element {
                         coordParams={coordParams}
                         chartDataLength={chartData.length}
                         isActive={rollingCursorEnabled ? isVisuallyActive : state.isActive}
+                        cursorY={cursorY}
                       />
                     </>
                   );
@@ -889,6 +907,7 @@ const ToolTip = memo(function ToolTip({
   coordParams,
   chartDataLength,
   isActive,
+  cursorY,
 }: {
   x: SharedValue<number>;
   matchedIndex: SharedValue<number>;
@@ -899,6 +918,7 @@ const ToolTip = memo(function ToolTip({
   coordParams: CoordParams;
   chartDataLength: number;
   isActive: SharedValue<boolean>;
+  cursorY: SharedValue<number>;
 }) {
   const opacity = useDerivedValue(() => {
     return withTiming(isActive.value ? 1 : 0, {
@@ -907,70 +927,84 @@ const ToolTip = memo(function ToolTip({
     });
   }, []);
 
-  const y = useDerivedValue(() => {
-    const detailed = toDetailedPoints.value;
-    if (detailed.length === 0 || chartDataLength === 0) return 0;
+  // Compute Y and write to shared cursorY — single source of truth for circle + horizontal line
+  // Uses useAnimatedReaction (not useDerivedValue) because writing to cursorY is a side effect
+  useAnimatedReaction(
+    () => {
+      // Track all inputs that affect Y position
+      const idx = visualIndex ? visualIndex.value : matchedIndex.value;
+      const morphT = interactionProgress ? interactionProgress.value : 0;
+      // Touch detailed/smooth to subscribe to their changes
+      const dLen = toDetailedPoints.value.length;
+      const sLen = toSmoothPoints ? toSmoothPoints.value.length : 0;
+      return { idx, morphT, dLen, sLen };
+    },
+    () => {
+      const detailed = toDetailedPoints.value;
+      if (detailed.length === 0 || chartDataLength === 0) {
+        cursorY.value = 0;
+        return;
+      }
 
-    // Helper: get Y from a data array at a given normalized position (float lerp)
-    const getYAtPos = (data: NormalizedPoint[], pos: number): number => {
-      "worklet";
-      if (data.length === 0) return 0;
-      const clamped = Math.max(0, Math.min(pos, data.length - 1));
-      const lo = Math.floor(clamped);
-      const hi = Math.min(lo + 1, data.length - 1);
-      const loP = data[lo];
-      const hiP = data[hi];
-      if (!loP || !hiP) return 0;
-      const w = clamped - lo;
-      return loP.y * (1 - w) + hiP.y * w;
-    };
+      // Helper: get Y from a data array at a given normalized position (float lerp)
+      const getYAtPos = (data: NormalizedPoint[], pos: number): number => {
+        "worklet";
+        if (data.length === 0) return 0;
+        const clamped = Math.max(0, Math.min(pos, data.length - 1));
+        const lo = Math.floor(clamped);
+        const hi = Math.min(lo + 1, data.length - 1);
+        const loP = data[lo];
+        const hiP = data[hi];
+        if (!loP || !hiP) return 0;
+        const w = clamped - lo;
+        return loP.y * (1 - w) + hiP.y * w;
+      };
 
-    // Determine the float position in the data array
-    let normalizedPos: number;
-    if (visualIndex) {
-      // Rolling cursor: float index
-      const maxIdx = Math.max(chartDataLength - 1, 1);
-      normalizedPos = (visualIndex.value / maxIdx) * (detailed.length - 1);
-    } else {
-      // Default: integer index mapping
-      const victoryIdx = matchedIndex.value;
-      if (victoryIdx < 0) return 0;
-      normalizedPos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
-    }
+      // Determine the float position in the data array
+      let normalizedPos: number;
+      if (visualIndex) {
+        const maxIdx = Math.max(chartDataLength - 1, 1);
+        normalizedPos = (visualIndex.value / maxIdx) * (detailed.length - 1);
+      } else {
+        const victoryIdx = matchedIndex.value;
+        if (victoryIdx < 0) {
+          cursorY.value = 0;
+          return;
+        }
+        normalizedPos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
+      }
 
-    // Get Y from detailed points
-    const detailedY = getYAtPos(detailed, normalizedPos);
+      const detailedY = getYAtPos(detailed, normalizedPos);
 
-    // If we have smooth points + interaction progress, lerp between smooth and detailed
-    // to match the line's current morph state (avoids ball-off-line desync)
-    let normY: number;
-    if (toSmoothPoints && interactionProgress) {
-      const smooth = toSmoothPoints.value;
-      if (smooth.length > 0) {
-        const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
-        const smoothY = getYAtPos(smooth, smoothPos);
-        const t = interactionProgress.value;
-        normY = smoothY + (detailedY - smoothY) * t;
+      let normY: number;
+      if (toSmoothPoints && interactionProgress) {
+        const smooth = toSmoothPoints.value;
+        if (smooth.length > 0) {
+          const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
+          const smoothY = getYAtPos(smooth, smoothPos);
+          const t = interactionProgress.value;
+          normY = smoothY + (detailedY - smoothY) * t;
+        } else {
+          normY = detailedY;
+        }
       } else {
         normY = detailedY;
       }
-    } else {
-      normY = detailedY;
-    }
 
-    return (
-      coordParams.chartBottom -
-      coordParams.dotMargin -
-      normY * coordParams.usableHeight
-    );
-  }, [coordParams, chartDataLength]);
+      cursorY.value =
+        coordParams.chartBottom -
+        coordParams.dotMargin -
+        normY * coordParams.usableHeight;
+    },
+    [coordParams, chartDataLength]
+  );
 
   return (
     <Group opacity={opacity}>
-      <Circle cx={x} cy={y} r={6} color="rgba(23, 21, 14, 1)" style="fill" />
+      <Circle cx={x} cy={cursorY} r={6} color="rgba(23, 21, 14, 1)" style="fill" />
       <Circle
         cx={x}
-        cy={y}
+        cy={cursorY}
         r={6}
         color="rgba(255, 221, 51, 1)"
         style="stroke"
@@ -989,12 +1023,53 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
   screenWidth,
   label,
   textColor,
+  visualIndex,
+  isVisuallyActive,
+  chartData,
+  selectedTimeframe,
 }: {
   xPosition: SharedValue<number>;
   screenWidth: number;
-  label: string;
+  label?: string;
   textColor: string;
+  visualIndex?: SharedValue<number>;
+  isVisuallyActive?: SharedValue<boolean>;
+  chartData?: ChartDataPoint[];
+  selectedTimeframe?: ChartTimeframe;
 }) {
+  const textRef = useRef<TextInput>(null);
+  const chartDataRef = useRef(chartData);
+  chartDataRef.current = chartData;
+  const selectedTimeframeRef = useRef(selectedTimeframe);
+  selectedTimeframeRef.current = selectedTimeframe;
+
+  const isRolling = !!visualIndex && !!isVisuallyActive;
+
+  const updateDateText = useCallback((floatIdx: number) => {
+    const data = chartDataRef.current;
+    const tf = selectedTimeframeRef.current;
+    if (!data || data.length === 0 || !tf) return;
+
+    const maxIdx = data.length - 1;
+    const clampedIdx = Math.max(0, Math.min(Math.round(floatIdx), maxIdx));
+    const timestamp = data[clampedIdx]?.timestamp ?? Date.now();
+    const formatted = formatActiveChartDate(timestamp, tf);
+    textRef.current?.setNativeProps({ text: formatted });
+  }, []);
+
+  useAnimatedReaction(
+    () => ({
+      idx: visualIndex?.value ?? 0,
+      active: isVisuallyActive?.value ?? false,
+    }),
+    (curr) => {
+      if (curr.active && isRolling) {
+        runOnJS(updateDateText)(curr.idx);
+      }
+    },
+    [isRolling]
+  );
+
   const animatedStyle = useAnimatedStyle(() => {
     const centeredLeft = xPosition.value - LABEL_WIDTH / 2;
     const clampedLeft = Math.max(
@@ -1009,8 +1084,36 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
       width: LABEL_WIDTH,
       alignItems: "center" as const,
       zIndex: 10,
+      opacity: isVisuallyActive ? (isVisuallyActive.value ? 1 : 0) : 1,
     };
   }, [screenWidth]);
+
+  const bodySm = typographyStyles["body-sm"];
+  const textStyle = {
+    fontFamily: bodySm.fontFamily,
+    fontSize: bodySm.fontSize,
+    lineHeight: bodySm.lineHeight,
+    color: textColor,
+    padding: 0,
+    margin: 0,
+    borderWidth: 0,
+    textAlign: "center" as const,
+  };
+
+  if (isRolling) {
+    return (
+      <Animated.View pointerEvents="none" style={animatedStyle}>
+        <TextInput
+          ref={textRef}
+          editable={false}
+          scrollEnabled={false}
+          pointerEvents="none"
+          defaultValue=""
+          style={textStyle}
+        />
+      </Animated.View>
+    );
+  }
 
   return (
     <Animated.View pointerEvents="none" style={animatedStyle}>

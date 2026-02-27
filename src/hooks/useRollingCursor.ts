@@ -33,12 +33,12 @@ type UseRollingCursorReturn = {
 const EASE_IN_OUT = Easing.inOut(Easing.quad);
 
 // Touch start: slow organic glide to finger (longer duration, ease-in-out)
-const TOUCH_START_TIMING = { duration: 1000, easing: EASE_IN_OUT };
+const TOUCH_START_TIMING = { duration: 600, easing: EASE_IN_OUT };
 // Release: snap back to end
-const RELEASE_TIMING = { duration: 700, easing: EASE_IN_OUT };
+const RELEASE_TIMING = { duration: 600, easing: EASE_IN_OUT };
 // Morph timing for smooth↔detailed transition (matches cursor timing)
-const MORPH_IN_TIMING = { duration: 1000, easing: EASE_IN_OUT };
-const MORPH_OUT_TIMING = { duration: 700, easing: EASE_IN_OUT };
+const MORPH_IN_TIMING = { duration: 400, easing: EASE_IN_OUT };
+const MORPH_OUT_TIMING = { duration: 400, easing: EASE_IN_OUT };
 
 export function useRollingCursor({
   enabled,
@@ -78,22 +78,22 @@ export function useRollingCursor({
         // Start smooth→detailed morph
         interactionMorphProgress.value = withTiming(1, MORPH_IN_TIMING);
       } else if (!active && prevActive) {
-        // Release: spring back to end
+        // Release: snap back + morph back simultaneously
         hasArrived.value = false;
         isReturning.value = true;
 
         visualIndex.value = withTiming(
           Math.max(0, dataLength - 1),
           RELEASE_TIMING,
-          (finished) => {
-            if (finished) {
-              isReturning.value = false;
-            }
-          }
         );
 
-        // Morph back to smooth
-        interactionMorphProgress.value = withTiming(0, MORPH_OUT_TIMING);
+        // Morph back to smooth in parallel; isReturning clears when morph finishes
+        // (morph duration >= snap-back, so it's the last to complete)
+        interactionMorphProgress.value = withTiming(0, MORPH_OUT_TIMING, (finished) => {
+          if (finished) {
+            isReturning.value = false;
+          }
+        });
       }
     },
     [dataLength]

@@ -51,29 +51,24 @@ type ChartBackgroundGridProps = {
   externalInteractionProgress?: SharedValue<number>;
   /** Float index from rolling cursor for smooth crosshair Y tracking */
   visualIndex?: SharedValue<number>;
+  /** Shared Y position computed by ToolTip — single source of truth for horizontal crosshair */
+  cursorY?: SharedValue<number>;
 };
 
 // Animated crosshairs component that uses SharedValues directly
 const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
   chartBounds,
   crosshairXPosition,
-  crosshairMatchedIndex,
-  toDetailedPoints,
-  coordParams,
-  chartDataLength,
   isVisuallyActive,
   interactionProgress,
-  visualIndex,
+  cursorY,
 }: {
   chartBounds: ChartBounds;
   crosshairXPosition: SharedValue<number>;
-  crosshairMatchedIndex: SharedValue<number>;
-  toDetailedPoints: SharedValue<NormalizedPoint[]>;
-  coordParams: CoordParams;
-  chartDataLength: number;
   isVisuallyActive: SharedValue<boolean>;
   interactionProgress?: SharedValue<number>;
-  visualIndex?: SharedValue<number>;
+  /** Shared Y position from ToolTip — single source of truth */
+  cursorY: SharedValue<number>;
 }) {
   const verticalOpacity = useDerivedValue(() => (isVisuallyActive.value ? 1 : 0));
   // Horizontal line fades in with interaction progress (appears late, not immediately)
@@ -86,41 +81,12 @@ const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
     }
     return 1;
   });
-  // Calculate Y position — uses visualIndex (float lerp) when available, else matchedIndex
-  const crosshairY = useDerivedValue(() => {
-    const detailed = toDetailedPoints.value;
-    if (detailed.length === 0 || chartDataLength === 0) return 0;
 
-    let pos: number;
-    if (visualIndex) {
-      // Float index from rolling cursor — smooth animated position
-      const maxIdx = Math.max(chartDataLength - 1, 1);
-      pos = (visualIndex.value / maxIdx) * (detailed.length - 1);
-    } else {
-      // Integer index from Victory
-      const victoryIdx = crosshairMatchedIndex.value;
-      if (victoryIdx < 0) return 0;
-      pos = (victoryIdx / Math.max(chartDataLength - 1, 1)) * (detailed.length - 1);
-    }
-
-    // Float lerp between adjacent points
-    const clamped = Math.max(0, Math.min(pos, detailed.length - 1));
-    const lo = Math.floor(clamped);
-    const hi = Math.min(lo + 1, detailed.length - 1);
-    const loP = detailed[lo];
-    const hiP = detailed[hi];
-    if (!loP || !hiP) return 0;
-    const w = clamped - lo;
-    const normY = loP.y * (1 - w) + hiP.y * w;
-
-    return coordParams.chartBottom - coordParams.dotMargin - normY * coordParams.usableHeight;
-  }, [coordParams, chartDataLength]);
-
-  // Derived values for line endpoints
+  // Derived values for line endpoints — Y reads directly from shared cursorY
   const verticalP1 = useDerivedValue(() => vec(crosshairXPosition.value, chartBounds.top));
   const verticalP2 = useDerivedValue(() => vec(crosshairXPosition.value, chartBounds.bottom));
-  const horizontalP1 = useDerivedValue(() => vec(chartBounds.left, crosshairY.value));
-  const horizontalP2 = useDerivedValue(() => vec(chartBounds.right, crosshairY.value));
+  const horizontalP1 = useDerivedValue(() => vec(chartBounds.left, cursorY.value));
+  const horizontalP2 = useDerivedValue(() => vec(chartBounds.right, cursorY.value));
 
   return (
     <Group>
@@ -208,6 +174,7 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
   isVisuallyActive,
   externalInteractionProgress,
   visualIndex,
+  cursorY,
 }: ChartBackgroundGridProps) {
   // Use animated approach if SharedValues are provided
   const useAnimatedApproach =
@@ -335,17 +302,13 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
       />
 
       {/* Animated crosshairs — always mounted, visibility driven by SharedValue */}
-      {useAnimatedApproach && crosshairXPosition && crosshairMatchedIndex && (
+      {useAnimatedApproach && crosshairXPosition && crosshairMatchedIndex && cursorY && (
         <AnimatedCrosshairs
           chartBounds={chartBounds}
           crosshairXPosition={crosshairXPosition}
-          crosshairMatchedIndex={crosshairMatchedIndex}
-          toDetailedPoints={toDetailedPoints}
-          coordParams={coordParams}
-          chartDataLength={chartDataLength}
           isVisuallyActive={effectiveActive}
           interactionProgress={externalInteractionProgress}
-          visualIndex={visualIndex}
+          cursorY={cursorY}
         />
       )}
 
