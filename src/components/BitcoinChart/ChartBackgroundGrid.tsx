@@ -79,11 +79,11 @@ const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
     if (interactionProgress) {
       const t = interactionProgress.value;
       if (isActive.value) {
-        // Forward: grow out during 0.6→1.0
-        return Math.max(0, Math.min(1, (t - 0.6) / 0.4));
+        // Forward: grow out during 0.4→1.0 (fully extended before scrubbing starts)
+        return Math.max(0, Math.min(1, (t - 0.4) / 0.6));
       } else {
         // Snap-back: collapse quickly at start (1.0→0.7)
-        return Math.max(0, Math.min(1, (t - 0.7) / 0.3));
+        return Math.max(0, Math.min(1, (t - 0.6) / 0.3));
       }
     }
     return 1;

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import {
   Easing,
   type SharedValue,
@@ -35,7 +36,7 @@ const EASE_IN_OUT = Easing.inOut(Easing.quad);
 // Touch start: slow organic glide to finger (longer duration, ease-in-out)
 const TOUCH_START_TIMING = { duration: 400, easing: EASE_IN_OUT };
 // Release: snap back to end
-const RELEASE_TIMING = { duration: 600, easing: EASE_IN_OUT };
+const RELEASE_TIMING = { duration: 400, easing: EASE_IN_OUT };
 // Morph timing for smooth↔detailed transition (matches cursor timing)
 const MORPH_IN_TIMING = { duration: 400, easing: EASE_IN_OUT };
 const MORPH_OUT_TIMING = { duration: 400, easing: EASE_IN_OUT };
@@ -99,6 +100,14 @@ export function useRollingCursor({
     [dataLength]
   );
 
+  // When data length changes (timeframe switch), keep cursor at end if idle
+  useEffect(() => {
+    if (!isActive.value && !isReturning.value) {
+      cancelAnimation(visualIndex);
+      visualIndex.value = Math.max(0, dataLength - 1);
+    }
+  }, [dataLength]);
+
   // During scrub: once initial spring has arrived, track 1:1
   useAnimatedReaction(
     () => matchedIndex.value,
@@ -120,7 +129,7 @@ export function useRollingCursor({
     if (!enabled.value) return xPosition.value;
 
     const maxIdx = Math.max(dataLength - 1, 1);
-    const normalizedX = visualIndex.value / maxIdx;
+    const normalizedX = Math.min(visualIndex.value / maxIdx, 1);
     return chartLeft + normalizedX * usableWidth;
   }, [dataLength, chartLeft, usableWidth]);
 
