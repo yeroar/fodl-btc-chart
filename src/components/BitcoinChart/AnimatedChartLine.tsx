@@ -104,7 +104,8 @@ export const AnimatedChartLine = memo(function AnimatedChartLine({
   // This handles both range changes (timeframe switches) and interaction changes (scrubbing) simultaneously
   // Reading from SharedValues on the UI thread ensures atomic access - no race conditions
   const animatedPath = useDerivedValue(() => {
-    const tInteraction = interactionProgress.value;
+    // Cap morph at 75% to keep the line smooth even when fully scrubbing
+    const tInteraction = Math.min(interactionProgress.value, 0.75);
     const tRange = rangeTransition.value;
 
     // Read from SharedValues (thread-safe on UI thread)

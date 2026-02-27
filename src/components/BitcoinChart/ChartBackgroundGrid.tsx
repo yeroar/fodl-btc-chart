@@ -59,57 +59,84 @@ type ChartBackgroundGridProps = {
 const AnimatedCrosshairs = memo(function AnimatedCrosshairs({
   chartBounds,
   crosshairXPosition,
+  isActive,
   isVisuallyActive,
   interactionProgress,
   cursorY,
 }: {
   chartBounds: ChartBounds;
   crosshairXPosition: SharedValue<number>;
+  isActive: SharedValue<boolean>;
   isVisuallyActive: SharedValue<boolean>;
   interactionProgress?: SharedValue<number>;
   /** Shared Y position from ToolTip — single source of truth */
   cursorY: SharedValue<number>;
 }) {
-  const verticalOpacity = useDerivedValue(() => (isVisuallyActive.value ? 1 : 0));
-  // Horizontal line fades in with interaction progress (appears late, not immediately)
-  const horizontalOpacity = useDerivedValue(() => {
+  // Line expansion factor: 0 = collapsed at cursor, 1 = full length
+  // Grow out from cursor on appear (0.6→1.0), collapse back on snap-back (1.0→0.7)
+  const lineExtent = useDerivedValue(() => {
     if (!isVisuallyActive.value) return 0;
-    // Use interaction progress if available — remaps 0.6..1 → 0..1 so it appears in the last 40%
     if (interactionProgress) {
       const t = interactionProgress.value;
-      return Math.max(0, Math.min(1, (t - 0.6) / 0.4));
+      if (isActive.value) {
+        // Forward: grow out during 0.6→1.0
+        return Math.max(0, Math.min(1, (t - 0.6) / 0.4));
+      } else {
+        // Snap-back: collapse quickly at start (1.0→0.7)
+        return Math.max(0, Math.min(1, (t - 0.7) / 0.3));
+      }
     }
     return 1;
   });
 
-  // Derived values for line endpoints — Y reads directly from shared cursorY
-  const verticalP1 = useDerivedValue(() => vec(crosshairXPosition.value, chartBounds.top));
-  const verticalP2 = useDerivedValue(() => vec(crosshairXPosition.value, chartBounds.bottom));
-  const horizontalP1 = useDerivedValue(() => vec(chartBounds.left, cursorY.value));
-  const horizontalP2 = useDerivedValue(() => vec(chartBounds.right, cursorY.value));
+  // Vertical line endpoints — grow from cursorY outward to top/bottom
+  const verticalP1 = useDerivedValue(() => {
+    const cx = crosshairXPosition.value;
+    const cy = cursorY.value;
+    const e = lineExtent.value;
+    return vec(cx, cy - (cy - chartBounds.top) * e);
+  });
+  const verticalP2 = useDerivedValue(() => {
+    const cx = crosshairXPosition.value;
+    const cy = cursorY.value;
+    const e = lineExtent.value;
+    return vec(cx, cy + (chartBounds.bottom - cy) * e);
+  });
+
+  // Horizontal line endpoints — grow from crosshairX outward to left/right
+  const horizontalP1 = useDerivedValue(() => {
+    const cx = crosshairXPosition.value;
+    const cy = cursorY.value;
+    const e = lineExtent.value;
+    return vec(cx - (cx - chartBounds.left) * e, cy);
+  });
+  const horizontalP2 = useDerivedValue(() => {
+    const cx = crosshairXPosition.value;
+    const cy = cursorY.value;
+    const e = lineExtent.value;
+    return vec(cx + (chartBounds.right - cx) * e, cy);
+  });
+
+  // Opacity follows same curve as extent for combined effect
+  const crosshairOpacity = useDerivedValue(() => lineExtent.value);
 
   return (
-    <Group>
-      {/* Vertical crosshair line — appears immediately */}
-      <Group opacity={verticalOpacity}>
-        <SkiaLine
-          p1={verticalP1}
-          p2={verticalP2}
-          strokeWidth={2}
-          color={CROSSHAIR_COLOR}
-          strokeCap="round"
-        />
-      </Group>
-      {/* Horizontal crosshair line — fades in late */}
-      <Group opacity={horizontalOpacity}>
-        <SkiaLine
-          p1={horizontalP1}
-          p2={horizontalP2}
-          strokeWidth={2}
-          color={CROSSHAIR_COLOR}
-          strokeCap="round"
-        />
-      </Group>
+    <Group opacity={crosshairOpacity}>
+      {/* Crosshair lines — grow + fade from / collapse + fade to cursor point */}
+      <SkiaLine
+        p1={verticalP1}
+        p2={verticalP2}
+        strokeWidth={2}
+        color={CROSSHAIR_COLOR}
+        strokeCap="round"
+      />
+      <SkiaLine
+        p1={horizontalP1}
+        p2={horizontalP2}
+        strokeWidth={2}
+        color={CROSSHAIR_COLOR}
+        strokeCap="round"
+      />
     </Group>
   );
 });
@@ -306,6 +333,7 @@ export const ChartBackgroundGrid = memo(function ChartBackgroundGrid({
         <AnimatedCrosshairs
           chartBounds={chartBounds}
           crosshairXPosition={crosshairXPosition}
+          isActive={isActive}
           isVisuallyActive={effectiveActive}
           interactionProgress={externalInteractionProgress}
           cursorY={cursorY}

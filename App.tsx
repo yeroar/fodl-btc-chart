@@ -982,7 +982,7 @@ const ToolTip = memo(function ToolTip({
         if (smooth.length > 0) {
           const smoothPos = normalizedPos * (smooth.length - 1) / Math.max(detailed.length - 1, 1);
           const smoothY = getYAtPos(smooth, smoothPos);
-          const t = interactionProgress.value;
+          const t = Math.min(interactionProgress.value, 0.75);
           normY = smoothY + (detailedY - smoothY) * t;
         } else {
           normY = detailedY;

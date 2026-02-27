@@ -62,7 +62,7 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
 
   // Animated X position - uses dual-axis interpolation to match the line exactly
   const animatedX = useDerivedValue(() => {
-    const tInteraction = interactionProgress.value;
+    const tInteraction = Math.min(interactionProgress.value, 0.75);
     const tRange = rangeTransition.value;
 
     const fromSmooth = fromSmoothPoints.value;
@@ -96,7 +96,7 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
 
   // Animated Y position - uses dual-axis interpolation to match the line exactly
   const animatedY = useDerivedValue(() => {
-    const tInteraction = interactionProgress.value;
+    const tInteraction = Math.min(interactionProgress.value, 0.75);
     const tRange = rangeTransition.value;
 
     const fromSmooth = fromSmoothPoints.value;
