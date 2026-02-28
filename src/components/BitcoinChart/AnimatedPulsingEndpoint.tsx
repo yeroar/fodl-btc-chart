@@ -1,11 +1,14 @@
 import LottieView from "lottie-react-native";
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import Animated, {
+  Easing,
   runOnJS,
   type SharedValue,
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
+  useSharedValue,
+  withTiming,
 } from "react-native-reanimated";
 
 import type { CoordParams, NormalizedPoint } from "./types";
@@ -34,17 +37,24 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
 }: AnimatedPulsingEndpointProps) {
   const lottieRef = useRef<LottieView>(null);
   const [showLottie, setShowLottie] = useState(true);
+  const bloomProgress = useSharedValue(1); // local bloom: 0=hidden, 1=full
 
-  // Mount/unmount LottieView + restart pulse when it reappears
+  // Mount/unmount LottieView + smooth bloom animation on reappear
   const onShow = useCallback(() => {
+    bloomProgress.value = 0;
     setTimeout(() => {
       setShowLottie(true);
+      bloomProgress.value = withTiming(1, {
+        duration: 350,
+        easing: Easing.out(Easing.cubic),
+      });
       setTimeout(() => lottieRef.current?.play(0), 0);
-    }, 100);
-  }, []);
+    }, 50);
+  }, [bloomProgress]);
   const onHide = useCallback(() => {
     setShowLottie(false);
-  }, []);
+    bloomProgress.value = 0;
+  }, [bloomProgress]);
 
   useAnimatedReaction(
     () => endpointMergeProgress.value,
@@ -94,14 +104,14 @@ export const AnimatedPulsingEndpoint = memo(function AnimatedPulsingEndpoint({
   }, [coordParams]);
 
   const animatedStyle = useAnimatedStyle(() => {
-    const progress = endpointMergeProgress.value;
+    const bloom = bloomProgress.value;
     return {
       position: "absolute" as const,
       left: animatedX.value - LOTTIE_SIZE / 2,
       top: animatedY.value - LOTTIE_SIZE / 2,
       width: LOTTIE_SIZE,
       height: LOTTIE_SIZE,
-      transform: [{ scale: 0.5 + progress * 0.5 }],
+      transform: [{ scale: 0.5 + bloom * 0.5 }],
     };
   });
 
