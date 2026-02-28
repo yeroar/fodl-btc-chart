@@ -37,6 +37,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, TextInput, useWindowDimensions, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
+  cancelAnimation,
   Easing,
   runOnJS,
   type SharedValue,
@@ -470,6 +471,33 @@ function BitcoinChartScreen(): React.JSX.Element {
     return morphed;
   }, []);
 
+  // Endpoint merge progress: 0=Lottie hidden, 1=Lottie visible
+  // Drives smooth cursor→endpoint merge on 1D with rolling cursor
+  const endpointMergeProgress = useSharedValue(1);
+
+  useAnimatedReaction(
+    () => ({
+      down: state.isActive.value,
+      morph: interactionMorphProgress.value,
+    }),
+    (curr, prev) => {
+      if (!rollingCursorEnabledSV.value) return;
+      if (curr.down && !prev?.down) {
+        // Touch start — fast shrink
+        endpointMergeProgress.value = withTiming(0, { duration: 120 });
+      } else if (!curr.down) {
+        // Snap-back — driven by morph progress (same 2s ease-in-out as snap-back)
+        // morph: 1=detailed (active), 0=smooth (idle)
+        // merge: 0=Lottie hidden, 1=Lottie visible
+        // Power curve keeps merge near 0 for most of snap-back, blooms at the end
+        cancelAnimation(endpointMergeProgress);
+        const t = 1 - curr.morph;
+        endpointMergeProgress.value = t * t * t * t * t;
+      }
+    },
+    []
+  );
+
   const domainPadding = useMemo(
     () => ({
       bottom: 15,
@@ -851,17 +879,14 @@ function BitcoinChartScreen(): React.JSX.Element {
 
           {/* Pulsing endpoint for 1D */}
           {selectedTimeframe.value === "1D" &&
-            !isActive &&
             chartData.length > 0 &&
             pulsingEndpointCoordParams && (
               <AnimatedPulsingEndpoint
                 fromSmoothPoints={fromSmoothPoints}
-                fromDetailedPoints={fromDetailedPoints}
                 toSmoothPoints={toSmoothPoints}
-                toDetailedPoints={toDetailedPoints}
                 coordParams={pulsingEndpointCoordParams}
                 rangeTransition={rangeTransition}
-                isActive={isActive}
+                endpointMergeProgress={endpointMergeProgress}
               />
             )}
         </View>

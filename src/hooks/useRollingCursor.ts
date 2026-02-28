@@ -36,7 +36,7 @@ const EASE_IN_OUT = Easing.inOut(Easing.quad);
 // Touch start: slow organic glide to finger (longer duration, ease-in-out)
 const TOUCH_START_TIMING = { duration: 400, easing: EASE_IN_OUT };
 // Release: snap back to end
-const RELEASE_TIMING = { duration: 400, easing: EASE_IN_OUT };
+const RELEASE_TIMING = { duration: 500, easing: EASE_IN_OUT };
 // Morph timing for smooth↔detailed transition (matches cursor timing)
 const MORPH_IN_TIMING = { duration: 400, easing: EASE_IN_OUT };
 const MORPH_OUT_TIMING = { duration: 400, easing: EASE_IN_OUT };

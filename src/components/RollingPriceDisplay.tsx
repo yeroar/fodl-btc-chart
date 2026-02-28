@@ -37,6 +37,8 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
   chartDataRef.current = chartData;
   const earliestPriceRef = useRef(earliestPrice);
   earliestPriceRef.current = earliestPrice;
+  const latestPriceRef = useRef(latestPrice);
+  latestPriceRef.current = latestPrice;
 
   const updateNativeText = useCallback((floatIdx: number) => {
     const data = chartDataRef.current;
@@ -68,24 +70,25 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
     });
   }, []);
 
-  // Reset text imperatively when display values change (timeframe switch)
+  // Reset text imperatively — reads from refs so it's always fresh even in stale worklet closures
   const resetToLatest = useCallback(() => {
-    const priceText = formatValueToStringValue(latestPrice, "usd");
-    const ep = earliestPrice;
-    const pctText = ep === 0 ? "0.00%" : `${(((latestPrice - ep) / ep) * 100).toFixed(2)}%`;
-    const diff = latestPrice - ep;
+    const lp = latestPriceRef.current;
+    const ep = earliestPriceRef.current;
+    const priceText = formatValueToStringValue(lp, "usd");
+    const pctText = ep === 0 ? "0.00%" : `${(((lp - ep) / ep) * 100).toFixed(2)}%`;
+    const diff = lp - ep;
 
     priceRef.current?.setNativeProps({ text: priceText });
     percentRef.current?.setNativeProps({ text: pctText });
     arrowRef.current?.setNativeProps({
       style: { transform: [{ scaleY: diff < 0 ? -1 : 1 }] },
     });
-  }, [latestPrice, earliestPrice]);
+  }, []);
 
   // Sync text when timeframe switches (defaultValue alone doesn't override setNativeProps)
   useEffect(() => {
     resetToLatest();
-  }, [resetToLatest]);
+  }, [latestPrice, earliestPrice]);
 
   // Fire on every animation frame of visualIndex
   useAnimatedReaction(
