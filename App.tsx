@@ -25,7 +25,6 @@ import { useExchangeRate } from "./src/hooks/useExchangeRate";
 import { useRollingCursor } from "./src/hooks/useRollingCursor";
 import { ArrowNarrowUpIcon } from "./src/icons/ArrowNarrowUpIcon";
 import { createSmoothCurve, getTargetPointsForTimeframe } from "./src/utils/chartSmoothing";
-import { typographyStyles } from "./src/theme/typography/typography";
 import { UNIT } from "./src/utils/conversions";
 
 import { Circle, Group } from "@shopify/react-native-skia";
@@ -34,7 +33,7 @@ import dayjs from "dayjs";
 import * as Font from "expo-font";
 import * as Haptics from "expo-haptics";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Platform, TextInput, useWindowDimensions, View } from "react-native";
+import { ActivityIndicator, Platform, useWindowDimensions, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import Animated, {
   cancelAnimation,
@@ -167,14 +166,14 @@ function formatActiveChartDate(
   }
 
   if (isDateOnly) {
-    return date.format("MMM D");
+    return date.format("MMM D, YYYY");
   }
 
   if (showTime) {
     return date.format("MMM D, hh:mm A");
   }
 
-  return date.format("MMM D");
+  return date.format("MMM D, YYYY");
 }
 
 // ─── Offline fallback (sliced from real CSV history) ─────────────────────────
@@ -1091,13 +1090,14 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
   chartData?: ChartDataPoint[];
   selectedTimeframe?: ChartTimeframe;
 }) {
-  const textRef = useRef<TextInput>(null);
   const chartDataRef = useRef(chartData);
   chartDataRef.current = chartData;
   const selectedTimeframeRef = useRef(selectedTimeframe);
   selectedTimeframeRef.current = selectedTimeframe;
 
   const isRolling = !!visualIndex && !!isVisuallyActive;
+
+  const [rollingDateText, setRollingDateText] = useState("");
 
   const updateDateText = useCallback((floatIdx: number) => {
     const data = chartDataRef.current;
@@ -1108,7 +1108,7 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
     const clampedIdx = Math.max(0, Math.min(Math.round(floatIdx), maxIdx));
     const timestamp = data[clampedIdx]?.timestamp ?? Date.now();
     const formatted = formatActiveChartDate(timestamp, tf);
-    textRef.current?.setNativeProps({ text: formatted });
+    setRollingDateText(formatted);
   }, []);
 
   useAnimatedReaction(
@@ -1126,9 +1126,10 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
 
   const animatedStyle = useAnimatedStyle(() => {
     const centeredLeft = xPosition.value - LABEL_WIDTH / 2;
+    const EDGE_PADDING = 55;
     const clampedLeft = Math.max(
-      0,
-      Math.min(centeredLeft, screenWidth - LABEL_WIDTH)
+      EDGE_PADDING - LABEL_WIDTH / 2,
+      Math.min(centeredLeft, screenWidth - EDGE_PADDING - LABEL_WIDTH / 2)
     );
 
     return {
@@ -1142,29 +1143,12 @@ const AnimatedDateLabel = memo(function AnimatedDateLabel({
     };
   }, [screenWidth]);
 
-  const bodySm = typographyStyles["body-sm"];
-  const textStyle = {
-    fontFamily: bodySm.fontFamily,
-    fontSize: bodySm.fontSize,
-    lineHeight: bodySm.lineHeight,
-    color: textColor,
-    padding: 0,
-    margin: 0,
-    borderWidth: 0,
-    textAlign: "center" as const,
-  };
-
   if (isRolling) {
     return (
       <Animated.View pointerEvents="none" style={animatedStyle}>
-        <TextInput
-          ref={textRef}
-          editable={false}
-          scrollEnabled={false}
-          pointerEvents="none"
-          defaultValue=""
-          style={textStyle}
-        />
+        <FoldText type="body-sm" color={textColor}>
+          {rollingDateText}
+        </FoldText>
       </Animated.View>
     );
   }
