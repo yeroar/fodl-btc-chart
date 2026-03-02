@@ -63,11 +63,23 @@ export function useRollingCursor({
 
       if (active && !prevActive) {
         // Touch start: spring from rest (end) to touched position
+        // Compute target index from pixel position (index-proportional, matching chart line)
+        // NOT from matchedIndex (Victory uses timestamp-proportional mapping which diverges
+        // on 1Y/ALL when data density is uneven, e.g. hourly recent + daily older)
         hasArrived.value = false;
         isReturning.value = false;
 
+        const normalizedX = Math.max(
+          0,
+          Math.min(
+            (xPosition.value - chartLeft) / Math.max(usableWidth, 1),
+            1
+          )
+        );
+        const targetIndex = normalizedX * (dataLength - 1);
+
         visualIndex.value = withTiming(
-          matchedIndex.value,
+          targetIndex,
           TOUCH_START_TIMING,
           (finished) => {
             if (finished) {
@@ -109,6 +121,7 @@ export function useRollingCursor({
   }, [dataLength]);
 
   // During scrub: once initial spring has arrived, track sub-pixel 1:1
+  // Uses pixel→index conversion (index-proportional, matching the chart line coordinate system)
   useAnimatedReaction(
     () => xPosition.value,
     () => {
@@ -131,7 +144,7 @@ export function useRollingCursor({
     [chartLeft, usableWidth, dataLength]
   );
 
-  // Derive pixel X position from visualIndex
+  // Derive pixel X position from visualIndex (index-proportional, matches chart line)
   const visualXPosition = useDerivedValue(() => {
     if (!enabled.value) return xPosition.value;
 
