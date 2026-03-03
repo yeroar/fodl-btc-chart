@@ -86,13 +86,13 @@ function sliceHistoryForTimeframe(timeframe: string): ChartDataPoint[] {
     }
   }
 
-  // 1D: interpolate hourly data to 5-minute intervals
+  // 1D: interpolate hourly data to exactly TARGET_POINT_COUNT evenly-spaced points
   if (timeframe === "1D" && sliced.length >= 2) {
-    const FIVE_MIN = 5 * 60 * 1000;
     const startTs = sliced[0]!.timestamp;
     const endTs = sliced[sliced.length - 1]!.timestamp;
     const result: ChartDataPoint[] = [];
-    for (let ts = startTs; ts <= endTs; ts += FIVE_MIN) {
+    for (let i = 0; i < TARGET_POINT_COUNT; i++) {
+      const ts = startTs + (endTs - startTs) * (i / (TARGET_POINT_COUNT - 1));
       // Find surrounding points for interpolation
       let lo = 0;
       let hi = sliced.length - 1;
