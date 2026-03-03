@@ -18,6 +18,7 @@ type RollingPriceDisplayProps = {
   chartData: ChartDataPoint[];
   earliestPrice: number;
   latestPrice: number;
+  showArrow?: boolean;
 };
 
 export const RollingPriceDisplay = memo(function RollingPriceDisplay({
@@ -26,19 +27,25 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
   chartData,
   earliestPrice,
   latestPrice,
+  showArrow = false,
 }: RollingPriceDisplayProps) {
   const theme = UnistylesRuntime.getTheme();
   const priceRef = useRef<TextInput>(null);
   const percentRef = useRef<TextInput>(null);
-  const arrowRef = useRef<View>(null);
+  const arrowUpRef = useRef<View>(null);
+  const arrowDownRef = useRef<View>(null);
 
-  // Ref to latest chartData for access in runOnJS callback
   const chartDataRef = useRef(chartData);
   chartDataRef.current = chartData;
   const earliestPriceRef = useRef(earliestPrice);
   earliestPriceRef.current = earliestPrice;
   const latestPriceRef = useRef(latestPrice);
   latestPriceRef.current = latestPrice;
+  const showArrowRef = useRef(showArrow);
+  showArrowRef.current = showArrow;
+
+  const positiveColor = "rgba(0, 126, 76, 1)";
+  const negativeColor = theme.colors.object.negative.bold.default;
 
   const updateNativeText = useCallback((floatIdx: number) => {
     const data = chartDataRef.current;
@@ -56,48 +63,58 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
 
     const ep = earliestPriceRef.current;
     const pctChange = ep === 0 ? 0 : ((lerpedPrice - ep) / ep) * 100;
+    const isPositive = pctChange >= 0;
 
     const priceText = formatValueToStringValue(lerpedPrice, "usd");
-    const pctText = `${pctChange.toFixed(2)}%`;
+
+    if (showArrowRef.current) {
+      const pctText = `${Math.abs(pctChange).toFixed(2)}%`;
+      percentRef.current?.setNativeProps({ text: pctText });
+      arrowUpRef.current?.setNativeProps({ style: { display: isPositive ? "flex" : "none" } });
+      arrowDownRef.current?.setNativeProps({ style: { display: isPositive ? "none" : "flex" } });
+    } else {
+      const pctText = `${isPositive ? "+ " : "- "}${Math.abs(pctChange).toFixed(2)}%`;
+      percentRef.current?.setNativeProps({ text: pctText });
+      const pctColor = isPositive ? positiveColor : negativeColor;
+      percentRef.current?.setNativeProps({ style: { color: pctColor } });
+    }
 
     priceRef.current?.setNativeProps({ text: priceText });
-    percentRef.current?.setNativeProps({ text: pctText });
-
-    // Update arrow direction
-    const diff = lerpedPrice - ep;
-    arrowRef.current?.setNativeProps({
-      style: { transform: [{ scaleY: diff < 0 ? -1 : 1 }] },
-    });
   }, []);
 
-  // Reset text imperatively — reads from refs so it's always fresh even in stale worklet closures
   const resetToLatest = useCallback(() => {
     const lp = latestPriceRef.current;
     const ep = earliestPriceRef.current;
     const priceText = formatValueToStringValue(lp, "usd");
-    const pctText = ep === 0 ? "0.00%" : `${(((lp - ep) / ep) * 100).toFixed(2)}%`;
-    const diff = lp - ep;
+    const pct = ep === 0 ? 0 : ((lp - ep) / ep) * 100;
+    const isPositive = pct >= 0;
 
     priceRef.current?.setNativeProps({ text: priceText });
-    percentRef.current?.setNativeProps({ text: pctText });
-    arrowRef.current?.setNativeProps({
-      style: { transform: [{ scaleY: diff < 0 ? -1 : 1 }] },
-    });
+
+    if (showArrowRef.current) {
+      const pctText = `${Math.abs(pct).toFixed(2)}%`;
+      percentRef.current?.setNativeProps({ text: pctText });
+      percentRef.current?.setNativeProps({ style: { color: theme.colors.face.primary } });
+      arrowUpRef.current?.setNativeProps({ style: { display: isPositive ? "flex" : "none" } });
+      arrowDownRef.current?.setNativeProps({ style: { display: isPositive ? "none" : "flex" } });
+    } else {
+      const pctText = `${isPositive ? "+ " : "- "}${Math.abs(pct).toFixed(2)}%`;
+      percentRef.current?.setNativeProps({ text: pctText });
+      const pctColor = isPositive ? positiveColor : negativeColor;
+      percentRef.current?.setNativeProps({ style: { color: pctColor } });
+    }
   }, []);
 
-  // Sync text when timeframe switches (defaultValue alone doesn't override setNativeProps)
   useEffect(() => {
     resetToLatest();
-  }, [latestPrice, earliestPrice]);
+  }, [latestPrice, earliestPrice, showArrow]);
 
-  // Fire on every animation frame of visualIndex
   useAnimatedReaction(
     () => ({ idx: visualIndex.value, active: isVisuallyActive.value }),
     (curr, prev) => {
       if (curr.active) {
         runOnJS(updateNativeText)(curr.idx);
       } else if (prev !== null && prev.active) {
-        // Just released — reset to latest price
         runOnJS(resetToLatest)();
       }
     },
@@ -109,6 +126,7 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
     fontFamily: headerMd.fontFamily,
     fontSize: headerMd.fontSize,
     lineHeight: headerMd.lineHeight,
+    fontVariant: ["tabular-nums" as const],
     color: theme.colors.face.primary,
     padding: 0,
     margin: 0,
@@ -116,17 +134,27 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
   };
 
   const initialPrice = formatValueToStringValue(latestPrice, "usd");
-  const initialPct = earliestPrice === 0
-    ? "0.00%"
-    : `${(((latestPrice - earliestPrice) / earliestPrice) * 100).toFixed(2)}%`;
-  const initialDiff = latestPrice - earliestPrice;
+  const initialPctValue = earliestPrice === 0 ? 0 : ((latestPrice - earliestPrice) / earliestPrice) * 100;
+  const isPositive = initialPctValue >= 0;
+
+  const initialPct = showArrow
+    ? `${Math.abs(initialPctValue).toFixed(2)}%`
+    : `${isPositive ? "+ " : "- "}${Math.abs(initialPctValue).toFixed(2)}%`;
+
+  const initialPctColor = showArrow
+    ? theme.colors.face.primary
+    : isPositive ? positiveColor : negativeColor;
+
+  const arrowColor = isPositive
+    ? theme.colors.object.positive.bold.default
+    : theme.colors.object.negative.bold.default;
 
   return (
     <View
       style={{
         flexDirection: "row",
         justifyContent: "space-between",
-        alignItems: "stretch",
+        alignItems: "center",
       }}
     >
       <TextInput
@@ -144,29 +172,46 @@ export const RollingPriceDisplay = memo(function RollingPriceDisplay({
           gap: theme.spacing["3xs"],
         }}
       >
-        <View
-          ref={arrowRef}
-          style={{
-            transform: [{ scaleY: initialDiff < 0 ? -1 : 1 }],
-          }}
-        >
-          <ArrowNarrowUpIcon
-            width={20}
-            height={20}
-            fill={
-              initialDiff < 0
-                ? theme.colors.object.negative.bold.default
-                : theme.colors.object.positive.bold.default
-            }
-          />
-        </View>
+        {showArrow && (
+          <>
+            <View
+              ref={arrowUpRef}
+              style={{
+                display: isPositive ? "flex" : "none",
+                height: headerMd.lineHeight,
+                justifyContent: "center",
+              }}
+            >
+              <ArrowNarrowUpIcon
+                width={20}
+                height={20}
+                fill={theme.colors.object.positive.bold.default}
+              />
+            </View>
+            <View
+              ref={arrowDownRef}
+              style={{
+                display: isPositive ? "none" : "flex",
+                height: headerMd.lineHeight,
+                justifyContent: "center",
+                transform: [{ scaleY: -1 }],
+              }}
+            >
+              <ArrowNarrowUpIcon
+                width={20}
+                height={20}
+                fill={theme.colors.object.negative.bold.default}
+              />
+            </View>
+          </>
+        )}
         <TextInput
           ref={percentRef}
           editable={false}
           scrollEnabled={false}
           pointerEvents="none"
           defaultValue={initialPct}
-          style={textStyle}
+          style={[textStyle, { color: initialPctColor }]}
         />
       </View>
     </View>

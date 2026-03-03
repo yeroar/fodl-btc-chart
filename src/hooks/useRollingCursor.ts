@@ -6,11 +6,11 @@ import {
   useAnimatedReaction,
   useDerivedValue,
   useSharedValue,
+  withSpring,
   withTiming,
 } from "react-native-reanimated";
 
 type UseRollingCursorParams = {
-  enabled: SharedValue<boolean>;
   isActive: SharedValue<boolean>;
   matchedIndex: SharedValue<number>;
   xPosition: SharedValue<number>;
@@ -33,16 +33,15 @@ type UseRollingCursorReturn = {
 // Easing curves for "slow-fast-slow" feel
 const EASE_IN_OUT = Easing.inOut(Easing.quad);
 
-// Touch start: slow organic glide to finger (longer duration, ease-in-out)
-const TOUCH_START_TIMING = { duration: 600, easing: EASE_IN_OUT };
+// Touch start: organic glide to finger
+const TOUCH_START_TIMING = { duration: 400, easing: EASE_IN_OUT };
 // Release: snap back to end
-const RELEASE_TIMING = { duration: 600, easing: EASE_IN_OUT };
+const RELEASE_TIMING = { duration: 400, easing: EASE_IN_OUT };
 // Morph timing for smooth↔detailed transition (matches cursor timing)
-const MORPH_IN_TIMING = { duration: 600, easing: EASE_IN_OUT };
-const MORPH_OUT_TIMING = { duration: 600, easing: EASE_IN_OUT };
+const MORPH_IN_TIMING = { duration: 400, easing: EASE_IN_OUT };
+const MORPH_OUT_TIMING = { duration: 400, easing: EASE_IN_OUT };
 
 export function useRollingCursor({
-  enabled,
   isActive,
   matchedIndex,
   xPosition,
@@ -59,8 +58,6 @@ export function useRollingCursor({
   useAnimatedReaction(
     () => isActive.value,
     (active, prevActive) => {
-      if (!enabled.value) return;
-
       if (active && !prevActive) {
         // Touch start: spring from rest (end) to touched position
         // Compute target index from pixel position (index-proportional, matching chart line)
@@ -112,33 +109,50 @@ export function useRollingCursor({
     [dataLength]
   );
 
-  // When data length changes (timeframe switch), keep cursor at end if idle
+  // When data length changes (timeframe switch), reset all animation state
   useEffect(() => {
-    if (!isActive.value && !isReturning.value) {
-      cancelAnimation(visualIndex);
-      visualIndex.value = Math.max(0, dataLength - 1);
-    }
+    cancelAnimation(visualIndex);
+    cancelAnimation(interactionMorphProgress);
+    visualIndex.value = Math.max(0, dataLength - 1);
+    interactionMorphProgress.value = 0;
+    hasArrived.value = true;
+    isReturning.value = false;
   }, [dataLength]);
 
-  // During scrub: once initial spring has arrived, track sub-pixel 1:1
+  // During scrub: track finger position
+  // Before arrival: retarget the glide animation to follow moving finger
+  // After arrival: track sub-pixel 1:1
   // Uses pixel→index conversion (index-proportional, matching the chart line coordinate system)
   useAnimatedReaction(
     () => xPosition.value,
     () => {
-      if (!enabled.value) return;
       if (!isActive.value) return;
 
+      // Convert pixel position to continuous float index
+      const normalizedX = Math.max(
+        0,
+        Math.min(
+          (xPosition.value - chartLeft) / Math.max(usableWidth, 1),
+          1
+        )
+      );
+      const targetIndex = normalizedX * (dataLength - 1);
+
       if (hasArrived.value) {
-        // Convert pixel position to continuous float index
-        const normalizedX = Math.max(
-          0,
-          Math.min(
-            (xPosition.value - chartLeft) / Math.max(usableWidth, 1),
-            1
-          )
-        );
+        // Post-arrival: instant 1:1 tracking
         cancelAnimation(visualIndex);
-        visualIndex.value = normalizedX * (dataLength - 1);
+        visualIndex.value = targetIndex;
+      } else {
+        // Mid-glide: retarget with spring (preserves velocity, no stutter)
+        visualIndex.value = withSpring(
+          targetIndex,
+          { damping: 30, stiffness: 200, mass: 0.5 },
+          (finished) => {
+            if (finished) {
+              hasArrived.value = true;
+            }
+          }
+        );
       }
     },
     [chartLeft, usableWidth, dataLength]
@@ -146,8 +160,6 @@ export function useRollingCursor({
 
   // Derive pixel X position from visualIndex (index-proportional, matches chart line)
   const visualXPosition = useDerivedValue(() => {
-    if (!enabled.value) return xPosition.value;
-
     const maxIdx = Math.max(dataLength - 1, 1);
     const normalizedX = Math.min(visualIndex.value / maxIdx, 1);
     return chartLeft + normalizedX * usableWidth;
@@ -155,7 +167,6 @@ export function useRollingCursor({
 
   // isVisuallyActive: active while touching OR during snap-back
   const isVisuallyActive = useDerivedValue(() => {
-    if (!enabled.value) return isActive.value;
     return isActive.value || isReturning.value;
   }, []);
 
