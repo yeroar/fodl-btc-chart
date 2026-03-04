@@ -73,12 +73,9 @@ npx expo run:ios --device        # physical device
 npx expo run:ios                  # simulator
 ```
 
-First build takes ~15 min on M1 Air (Skia compilation).
+First build takes ~15-30 min (Skia compilation).
 
-Then start Metro:
-```bash
-npx expo start --dev-client
-```
+
 
 ## Step 5: Trust Developer Certificate (physical device only)
 
